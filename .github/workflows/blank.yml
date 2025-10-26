@@ -1,0 +1,195 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
+
+تمام ✅، إليك السكريبت الكامل المعدّل. يمكنك نسخه مباشرة وحفظه باسم:
+
+setup_deltastars_full_auto.sh
+
+
+---
+
+#!/bin/bash
+
+# =========================================
+# Deltastars Full Automated Setup Script
+# =========================================
+
+echo "Starting Deltastars full automated setup..."
+
+# --- المتغيرات ---
+PROJECT_DIR="$(pwd)/deltastars_project"
+DOCKER_COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
+ENV_FILE="$PROJECT_DIR/secrets.env"
+PRODUCTS_DIR="$PROJECT_DIR/data/products"
+DOCS_DIR="$PROJECT_DIR/backend/docs/secure"
+
+MANAGER_EMAIL="deltastars777@gmail.com"
+MANAGER_PASSWORD="Admin123!"
+BIOMETRIC_PLACEHOLDER="biometric_key_placeholder"
+
+# إنشاء مجلدات المشروع
+mkdir -p "$PROJECT_DIR" "$PRODUCTS_DIR" "$DOCS_DIR"
+
+# --- تنزيل ملفات كشف المنتجات الثلاثة ---
+echo "Downloading product files..."
+wget -O "$PRODUCTS_DIR/products_1.xlsx" "https://drive.google.com/uc?export=download&id=1ncgLWgU7451YY8W9B8-fnSWJho9BrpQN"
+wget -O "$PRODUCTS_DIR/products_2.xlsx" "https://drive.google.com/uc?export=download&id=1TPlntZDzvSFzbKL76QO0BtjErNf5B_uR"
+wget -O "$PRODUCTS_DIR/products_3.xlsx" "https://drive.google.com/uc?export=download&id=1D6X858HiAAxZf-u7yS9rPSSsH3rRked_"
+
+# --- تنزيل الوثائق الرسمية ---
+echo "Downloading official documents..."
+wget -O "$DOCS_DIR/manager_id.pdf" "https://drive.google.com/uc?export=download&id=1MidaG2glKPgOMGPQgN28M4ks-YbUM8vH"
+wget -O "$DOCS_DIR/trade_license.pdf" "https://drive.google.com/uc?export=download&id=1ZhiuIawZC6SPEf91tXR2lfZM4jo10JDY"
+wget -O "$DOCS_DIR/tax_number.pdf" "https://drive.google.com/uc?export=download&id=12mBYsWHZuQgHLu0DF6ddQnK4Tkwm60ON"
+
+# --- إنشاء ملف Docker Compose ---
+echo "Creating Docker Compose file..."
+cat > "$DOCKER_COMPOSE_FILE" <<EOL
+version: '3.8'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: deltastars_user
+      POSTGRES_PASSWORD: deltastars_pass
+      POSTGRES_DB: deltastars_db
+    volumes:
+      - db_data:/var/lib/postgresql/data
+  backend:
+    build: ./backend
+    env_file:
+      - ./secrets.env
+    command: bash -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+volumes:
+  db_data:
+EOL
+
+# --- إنشاء ملف secrets.env ---
+echo "Creating secrets.env..."
+cat > "$ENV_FILE" <<EOL
+DJANGO_SECRET_KEY=your_django_secret_key
+DJANGO_DEBUG=True
+POSTGRES_USER=deltastars_user
+POSTGRES_PASSWORD=deltastars_pass
+POSTGRES_DB=deltastars_db
+MANAGER_EMAIL=$MANAGER_EMAIL
+MANAGER_PASSWORD=$MANAGER_PASSWORD
+BIOMETRIC_KEY=$BIOMETRIC_PLACEHOLDER
+COMPANY_EMAIL=INFO@DELTASTARS-KSA.COM
+COMPANY_PHONE=00966920023204
+COMPANY_WHATSAPP=00966558828009
+COMPANY_WEBSITE=https://deltastars-ksa.com/ar/#contact-us
+COMPANY_MAP=https://maps.app.goo.gl/ZHoiZKmkuj4no2vg8
+EOL
+
+# --- إنشاء أيقونات وشعار واجهة Frontend ---
+echo "Preparing frontend icons..."
+mkdir -p "$PROJECT_DIR/frontend/public/icons"
+touch "$PROJECT_DIR/frontend/public/icons/logo.png"
+touch "$PROJECT_DIR/frontend/public/icons/icon-192.png"
+touch "$PROJECT_DIR/frontend/public/icons/icon-512.png"
+
+# --- إنشاء مجلدات PWA ---
+mkdir -p "$PROJECT_DIR/frontend/public/pwa"
+touch "$PROJECT_DIR/frontend/public/manifest.json"
+touch "$PROJECT_DIR/frontend/public/service-worker.js"
+
+# --- دمج المنتجات في قاعدة البيانات Django (placeholder) ---
+echo "Products will be imported via Django management command..."
+echo "You need to implement a management command 'import_products' that reads Excel files from $PRODUCTS_DIR"
+
+# --- تعليمات تشغيل ---
+echo "Setup script completed successfully!"
+echo "Next steps:"
+echo "1. Verify and fill secrets.env with real values if needed."
+echo "2. Build and run Docker Compose:"
+echo "   docker compose up --build -d"
+echo "3. Create superuser (if not auto-created) and verify admin access:"
+echo "   docker compose exec backend python manage.py createsuperuser"
+echo "4. Access Frontend: http://localhost:3000 or your server IP"
+echo "5. Access Backend Admin: http://localhost:8000/admin/"
+echo "6. Open the site on your phone, accept self-signed SSL if needed, and add to home screen (PWA)."
+
+
+---
+
+✅ خطوات الاستخدام بعد النسخ:
+
+1. افتح أي محرر نصوص على الهاتف أو الكمبيوتر.
+
+
+2. الصق النص أعلاه واحفظه باسم:
+
+
+
+setup_deltastars_full_auto.sh
+
+3. اجعل الملف قابل للتنفيذ:
+
+
+
+chmod +x setup_deltastars_full_auto.sh
+
+4. شغّل السكريبت:
+
+
+
+./setup_deltastars_full_auto.sh
+
+5. بعد التشغيل، يمكنك الوصول إلى:
+
+
+
+Frontend: http://localhost:3000 أو IP الجهاز
+
+Backend Admin: http://localhost:8000/admin/
+
+
+
+---
+
+إذا أحببت، يمكنني الآن كتابة كود Django جاهز لإدراج المنتجات تلقائيًا من ملفات Excel الثلاثة داخل قاعدة البيانات تلقائيًا بحيث يصبح المشروع جاهز للعمل بكبسة زر واحدة.
+
+هل تريد أن أفعل ذلك؟
