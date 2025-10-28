@@ -1,4 +1,584 @@
-# This is a basic workflow to help you get started with Actions
+#!/bin/bash
+set -euo pipefail
+# ==========================================================
+# setup_deltastars_full_auto.sh
+# One-click full setup for Deltastars (Dev/Test)
+# Creates Django backend, React PWA frontend, Postgres, Nginx, SSL,
+# product importer, admin setup, VIP isolation, payment settings.
+# ==========================================================
+ROOT="$(pwd)/Deltastars_project"
+BACKEND="$ROOT/backend"
+FRONTEND="$ROOT/frontend"
+DATA="$ROOT/data/products"
+DOCS="$BACKEND/docs/secure"
+NGINX="$ROOT/nginx"
+CERTS="$ROOT/certs"
+LOGS="$ROOT/logs"
+
+DOMAIN="${DOMAIN:-deltastars.local}"
+# Direct-download product file from Google Drive (you gave this link)
+PRODUCTS_GDRIVE="https://drive.google.com/uc?export=download&id=1ncgLWgU7451YY8W9B8-fnSWJho9BrpQN"
+
+# Admins
+ADMIN_PRIMARY="INFO@DELTASTARS-KSA.COM"
+ADMIN_SECONDARY="deltastars777@gmail.com"
+ADMIN_PASS_DEFAULT="Deltastars@2025"
+
+# DB defaults (change in secrets.env later)
+POSTGRES_DB="deltastars_db"
+POSTGRES_USER="deltastars_user"
+POSTGRES_PASSWORD="Deltastars@2025"
+
+# Company contacts
+COMPANY_EMAIL="INFO@DELTASTARS-KSA.COM"
+COMPANY_PHONE="00966920023204"
+COMPANY_WHATSAPP="00966558828009"
+COMPANY_WEBSITE="https://deltastars-ksa.com/ar/#contact-us"
+COMPANY_MAP="https://maps.app.goo.gl/ZHoiZKmkuj4no2vg8"
+
+# Create folders
+echo "Creating folders..."
+mkdir -p "$BACKEND" "$FRONTEND" "$DATA" "$DOCS" "$NGINX" "$CERTS" "$LOGS"
+
+# Write secrets.env.example (copy to secrets.env and edit)
+cat > "$ROOT/secrets.env.example" <<ENV
+DJANGO_SECRET_KEY=please-change-me
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=$DOMAIN,localhost,127.0.0.1
+
+POSTGRES_DB=$POSTGRES_DB
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+
+ADMIN1_EMAIL=$ADMIN_PRIMARY
+ADMIN1_PASS=$ADMIN_PASS_DEFAULT
+ADMIN2_EMAIL=$ADMIN_SECONDARY
+ADMIN2_PASS=$ADMIN_PASS_DEFAULT
+
+BANK_NAME=AlarabiBank
+BANK_BRANCH=Rehab
+BANK_ACCOUNT=
+BANK_IBAN=
+
+COMPANY_EMAIL=$COMPANY_EMAIL
+COMPANY_PHONE=$COMPANY_PHONE
+COMPANY_WHATSAPP=$COMPANY_WHATSAPP
+COMPANY_WEBSITE=$COMPANY_WEBSITE
+COMPANY_MAP=$COMPANY_MAP
+
+PRODUCTS_GDRIVE_LINK=$PRODUCTS_GDRIVE
+ENV
+
+echo "Wrote $ROOT/secrets.env.example — copy to secrets.env and edit before production."
+
+# Download products file (if curl available)
+echo "Attempting to download products file to $DATA/products.xlsx ..."
+if command -v curl >/dev/null 2>&1; then
+  curl -L -o "$DATA/products.xlsx" "$PRODUCTS_GDRIVE" || echo "Warning: could not download products file automatically."
+else
+  echo "curl not found — place products.xlsx manually into $DATA"
+fi
+
+# -----------------
+# Backend files
+# -----------------
+echo "Creating backend skeleton..."
+cat > "$BACKEND/requirements.txt" <<REQ
+Django>=4.2
+djangorestframework
+psycopg2-binary
+django-cors-headers
+gunicorn
+python-dotenv
+pandas
+openpyxl
+REQ
+
+cat > "$BACKEND/Dockerfile" <<DOCK
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+WORKDIR /code
+COPY requirements.txt /code/
+RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY . /code/
+CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+DOCK
+
+cat > "$BACKEND/manage.py" <<MG
+#!/usr/bin/env python
+import os, sys
+if __name__ == "__main__":
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    from django.core.management import execute_from_command_line
+    execute_from_command_line(sys.argv)
+MG
+chmod +x "$BACKEND/manage.py"
+
+mkdir -p "$BACKEND/core"
+cat > "$BACKEND/core/__init__.py" <<PY
+# core
+PY
+
+# core settings (load secrets.env)
+cat > "$BACKEND/core/settings.py" <<'SET'
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent / 'secrets.env')
+BASE_DIR = Path(__file__).resolve().parent.parent
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "please-change-me")
+DEBUG = os.getenv("DJANGO_DEBUG", "False") == "True"
+ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+INSTALLED_APPS = [
+    "django.contrib.admin","django.contrib.auth","django.contrib.contenttypes",
+    "django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles",
+    "rest_framework","corsheaders","products","customers"
+]
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware","django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware","django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware","django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+]
+ROOT_URLCONF = "core.urls"
+WSGI_APPLICATION = "core.wsgi.application"
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv('POSTGRES_DB','deltastars_db'),
+        "USER": os.getenv('POSTGRES_USER','deltastars_user'),
+        "PASSWORD": os.getenv('POSTGRES_PASSWORD','Deltastars@2025'),
+        "HOST": os.getenv('POSTGRES_HOST','db'),
+        "PORT": os.getenv('POSTGRES_PORT','5432'),
+    }
+}
+LANGUAGE_CODE = "ar-SA"
+TIME_ZONE = "Asia/Riyadh"
+USE_I18N = True
+USE_TZ = True
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+CORS_ALLOW_ALL_ORIGINS = True
+AUTH_USER_MODEL = "customers.User"
+SET
+
+cat > "$BACKEND/core/urls.py" <<PYU
+from django.contrib import admin
+from django.urls import path, include
+urlpatterns = [
+    path('admin/', admin.site.urls),
+]
+PYU
+
+cat > "$BACKEND/core/wsgi.py" <<PYW
+import os
+from django.core.wsgi import get_wsgi_application
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+application = get_wsgi_application()
+PYW
+
+# -----------------
+# Apps: products & customers
+# -----------------
+echo "Creating apps: products & customers..."
+
+mkdir -p "$BACKEND/products/management/commands"
+mkdir -p "$BACKEND/products/migrations"
+mkdir -p "$BACKEND/customers/migrations"
+
+cat > "$BACKEND/products/models.py" <<PM
+from django.db import models
+class Category(models.Model):
+    name = models.CharField(max_length=200)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
+class Product(models.Model):
+    sku = models.CharField(max_length=100, blank=True, null=True)
+    name = models.CharField(max_length=255)
+    category = models.CharField(max_length=255, blank=True, null=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    stock = models.IntegerField(default=0)
+    image_url = models.CharField(max_length=1000, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self):
+        return self.name
+PM
+
+cat > "$BACKEND/customers/models.py" <<CM
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+class User(AbstractUser):
+    phone = models.CharField(max_length=30, blank=True, null=True)
+    is_vip = models.BooleanField(default=False)
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    biometric_key = models.CharField(max_length=512, blank=True, null=True)
+    def __str__(self):
+        return self.username
+CM
+
+cat > "$BACKEND/products/serializers.py" <<PS
+from rest_framework import serializers
+from .models import Product
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = '__all__'
+PS
+
+cat > "$BACKEND/products/views.py" <<PV
+from rest_framework import viewsets, permissions
+from .models import Product
+from .serializers import ProductSerializer
+class ProductViewSet(viewsets.ModelViewSet):
+    queryset = Product.objects.filter(is_active=True)
+    serializer_class = ProductSerializer
+    permission_classes = [permissions.AllowAny]
+PV
+
+cat >> "$BACKEND/core/urls.py" <<URLAP
+from rest_framework import routers
+from products.views import ProductViewSet
+router = routers.DefaultRouter()
+router.register(r'api/products', ProductViewSet, basename='products')
+urlpatterns += router.urls
+URLAP
+
+cat > "$BACKEND/customers/admin.py" <<CUSTADM
+from django.contrib import admin
+from .models import User
+admin.site.register(User)
+CUSTADM
+
+cat > "$BACKEND/products/admin.py" <<PRODADM
+from django.contrib import admin
+from .models import Product, Category
+admin.site.register(Product)
+admin.site.register(Category)
+PRODADM
+
+# Management command to import products from data/products/*.xlsx or .csv
+cat > "$BACKEND/products/management/commands/import_products.py" <<IMP
+import os, pandas as pd
+from django.core.management.base import BaseCommand
+from products.models import Product
+
+class Command(BaseCommand):
+    help = 'Import products from Excel files located in data/products'
+
+    def handle(self, *args, **options):
+        data_dir = os.path.join(os.getcwd(), 'data', 'products')
+        files = [f for f in os.listdir(data_dir) if f.endswith('.xlsx') or f.endswith('.csv')]
+        if not files:
+            self.stdout.write(self.style.ERROR('No product files found in data/products'))
+            return
+        for f in files:
+            path = os.path.join(data_dir, f)
+            self.stdout.write(f'Importing: {path}')
+            try:
+                if path.lower().endswith('.csv'):
+                    df = pd.read_csv(path)
+                else:
+                    df = pd.read_excel(path)
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'Error reading {path}: {e}'))
+                continue
+            for idx, row in df.iterrows():
+                sku = row.get('رقم') or row.get('sku') or ''
+                name = row.get('الاسم') or row.get('Name') or 'Unnamed'
+                category = row.get('الصنف') or row.get('Category') or ''
+                price = row.get('السعر') or row.get('Price') or 0
+                image = row.get('صورة') or row.get('Image') or ''
+                desc = row.get('الوصف') or row.get('Description') or ''
+                product, created = Product.objects.update_or_create(
+                    name=name,
+                    defaults={'sku':sku,'category':category,'price':price,'stock':0,'image_url':image,'description':desc,'is_active':True}
+                )
+                if created:
+                    self.stdout.write(self.style.SUCCESS(f'Created {name}'))
+                else:
+                    self.stdout.write(self.style.WARNING(f'Updated {name}'))
+        self.stdout.write(self.style.SUCCESS('Import finished.'))
+IMP
+
+# backend .env template (also created in secrets.example)
+cat > "$BACKEND/.env" <<ENV
+DJANGO_SECRET_KEY=please-change-me
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=$DOMAIN,localhost,127.0.0.1
+POSTGRES_DB=$POSTGRES_DB
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+ENV
+
+# payment_settings internal (bank data read from secrets.env)
+cat > "$BACKEND/payment_settings.py" <<PAY
+import os
+from dotenv import load_dotenv
+from pathlib import Path
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / 'secrets.env')
+BANK_NAME = os.getenv('BANK_NAME','')
+BANK_BRANCH = os.getenv('BANK_BRANCH','')
+BANK_ACCOUNT = os.getenv('BANK_ACCOUNT','')
+BANK_IBAN = os.getenv('BANK_IBAN','')
+PAY
+
+# -----------------
+# Frontend PWA placeholders & icons
+# -----------------
+echo "Creating frontend PWA placeholders..."
+cat > "$FRONTEND/package.json" <<FPKG
+{
+  "name": "deltastars-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "serve -s build -l 3000",
+    "build": "echo 'Replace this with your React build command'"
+  },
+  "dependencies": {
+    "serve": "^14.2.0"
+  }
+}
+FPKG
+
+mkdir -p "$FRONTEND/public/icons"
+# create placeholder icons (if convert exists, will create transparent PNG; otherwise create empty files)
+for size in 192 512; do
+  if command -v convert >/dev/null 2>&1; then
+    convert -size ${size}x${size} canvas:none "$FRONTEND/public/icons/icon-${size}.png" || touch "$FRONTEND/public/icons/icon-${size}.png"
+  else
+    touch "$FRONTEND/public/icons/icon-${size}.png"
+  fi
+done
+
+cat > "$FRONTEND/public/manifest.json" <<MAN
+{
+  "short_name": "Deltastars",
+  "name": "Deltastars Store",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0b74de",
+  "background_color": "#ffffff",
+  "icons":[
+    {"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png"}
+  ]
+}
+MAN
+
+cat > "$FRONTEND/public/service-worker.js" <<SW
+self.addEventListener('install', function(e){ console.log('Service Worker installed'); });
+SW
+
+cat > "$FRONTEND/public/index.html" <<IDX
+<!doctype html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>Deltastars</title>
+</head>
+<body>
+  <div id="root">
+    <header><h1>دلتا ستارز - Deltastars</h1></header>
+    <main>
+      <p>مرحبًا — سيتم عرض المنتجات المستوردة هنا. يمكنك بناء واجهة React الحقيقية واستبدال ملفات البناء في frontend/build</p>
+      <p>اتصل: $COMPANY_PHONE - واتساب: $COMPANY_WHATSAPP - البريد: $COMPANY_EMAIL</p>
+    </main>
+    <footer><p><a href="$COMPANY_WEBSITE">موقع الشركة</a> | <a href="$COMPANY_MAP">خريطة</a></p></footer>
+  </div>
+</body>
+</html>
+IDX
+
+# -----------------
+# Nginx + self-signed certs
+# -----------------
+cat > "$NGINX/nginx.conf" <<NGC
+user  nginx;
+worker_processes  auto;
+events { worker_connections 1024; }
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile        on;
+    keepalive_timeout 65;
+    upstream frontend { server frontend:80; }
+    upstream backend { server backend:8000; }
+    server {
+        listen 80;
+        server_name _;
+        return 301 https://\$host\$request_uri;
+    }
+    server {
+        listen 443 ssl;
+        server_name _;
+        ssl_certificate /etc/nginx/certs/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+        location / {
+            proxy_pass http://frontend;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+        }
+        location /api/ {
+            proxy_pass http://backend;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+        }
+        location /admin/ {
+            proxy_pass http://backend;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+        }
+    }
+}
+NGC
+
+if [ ! -f "$CERTS/privkey.pem" ]; then
+  echo "Generating local self-signed certs for $DOMAIN ..."
+  openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout "$CERTS/privkey.pem" -out "$CERTS/fullchain.pem" -subj "/C=SA/ST=Riyadh/L=Riyadh/O=Deltastars/OU=IT/CN=$DOMAIN"
+  chmod 600 "$CERTS/privkey.pem" "$CERTS/fullchain.pem"
+fi
+
+# -----------------
+# docker-compose
+# -----------------
+cat > "$ROOT/docker-compose.yml" <<DC
+version: '3.8'
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_DB: $POSTGRES_DB
+      POSTGRES_USER: $POSTGRES_USER
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - deltanet
+
+  backend:
+    build:
+      context: ./backend
+    restart: always
+    env_file:
+      - ./secrets.env
+    volumes:
+      - ./backend:/code
+      - ./data:/data
+    depends_on:
+      - db
+    expose:
+      - "8000"
+    networks:
+      - deltanet
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: always
+    networks:
+      - deltanet
+    expose:
+      - "80"
+
+  nginx:
+    image: nginx:stable-alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/build:/usr/share/nginx/html:ro
+      - ./certs:/etc/nginx/certs:ro
+      - ./logs:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - deltanet
+
+volumes:
+  db_data:
+networks:
+  deltanet:
+    driver: bridge
+DC
+
+# -----------------
+# Start build & run
+# -----------------
+echo "IMPORTANT: copy $ROOT/secrets.env.example to $ROOT/secrets.env and edit sensitive values (POSTGRES_PASSWORD, BANK_ACCOUNT, BANK_IBAN, ADMIN passwords) before production."
+
+if [ ! -f "$ROOT/secrets.env" ]; then
+  cp "$ROOT/secrets.env.example" "$ROOT/secrets.env"
+  echo "A default secrets.env was copied to $ROOT/secrets.env — edit it now if needed."
+fi
+
+echo "Building and starting docker compose (this may take a few minutes)..."
+cd "$ROOT"
+docker compose up --build -d
+
+echo "Waiting 12s for containers to initialize..."
+sleep 12
+
+echo "Running migrations, creating admins, importing products..."
+docker compose exec backend bash -lc "python manage.py makemigrations --noinput || true; python manage.py migrate --noinput"
+
+# create admins inside container
+docker compose exec backend bash -lc "python - <<PY
+from django.contrib.auth import get_user_model
+User = get_user_model()
+import os
+admin1 = os.getenv('ADMIN1_EMAIL','${ADMIN_PRIMARY}')
+admin1p = os.getenv('ADMIN1_PASS','${ADMIN_PASS_DEFAULT}')
+admin2 = os.getenv('ADMIN2_EMAIL','${ADMIN_SECONDARY}')
+admin2p = os.getenv('ADMIN2_PASS','${ADMIN_PASS_DEFAULT}')
+if not User.objects.filter(username=admin1).exists():
+    User.objects.create_superuser(admin1, admin1, admin1p)
+    print('created admin', admin1)
+else:
+    print('admin exists', admin1)
+if not User.objects.filter(username=admin2).exists():
+    User.objects.create_superuser(admin2, admin2, admin2p)
+    print('created admin', admin2)
+else:
+    print('admin exists', admin2)
+PY"
+
+# import products
+docker compose exec backend bash -lc "python manage.py import_products || true"
+
+docker compose exec backend bash -lc "python manage.py collectstatic --noinput || true" || true
+
+cat <<CHECK
+
+SUCCESS — Setup finished.
+
+Verification checklist:
+1) Add hosts entry (local): 127.0.0.1 $DOMAIN
+2) Visit: https://$DOMAIN  (accept self-signed cert)
+3) Admin: https://$DOMAIN/admin/  (admins: $ADMIN_PRIMARY, $ADMIN_SECONDARY) — use passwords from secrets.env
+4) Products API: https://$DOMAIN/api/products/
+5) PWA: open on phone and Add to Home screen.
+
+Security note: change DJANGO_SECRET_KEY, strong DB passwords, move bank details to secure Vault for production.
+
+If you face issues, run:
+  docker compose ps
+  docker compose logs backend
+
+CHECK
+
+exit 0# This is a basic workflow to help you get started with Actions
 
 name: CI
 
