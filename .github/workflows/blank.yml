@@ -1,13 +1,11 @@
-setup_deltastars_full_project.sh
+Starting Deltastars full automated setup..."
+
 
 #!/bin/bash
 
 # =========================================
 # Deltastars Full Automated Setup Script
-# =========================================
-
-echo "Starting Deltastars full automated setup..."
-
+# =======================================
 # --- المتغيرات ---
 PROJECT_DIR="$(pwd)/deltastars_project"
 DOCKER_COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
