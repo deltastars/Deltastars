@@ -1,4 +1,3 @@
-Starting Deltastars full automated 
 PROJECT_DIR="$(pwd)/deltastars_project"
 DOCKER_COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 ENV_FILE="$PROJECT_DIR/secrets.env"
